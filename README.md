@@ -1,6 +1,6 @@
 # I. TỔNG QUAN VỀ CẢM BIẾN VÂN TAY ZW111   
 
-![Sensor image](../Images/ZW111sensor.png)
+![Sensor image](/Images/ZW111sensor.png)
 ![Datasheet ZW111](https://www.elemon.com.ar/images/productos/hojas-de-datos/sensores-huella-dactilar/zw111.pdf)
 ![Datasheet Fingerprint Sensor Module User Manual](https://cdn.sparkfun.com/assets/5/a/3/f/c/Module_User_Manual-17151-Capacitive_Fingerprint_Scanner_-_AS-108M.pdf)
 
@@ -50,21 +50,21 @@
    - Manage 
 - Toàn bộ thuật toán đóng kín
 
-### 3.3. ROM/Flash/RAM 
+### 3.3. ROM/FLASH/RAM 
 - ROM:
    - Chứa firmware gốc 
    - Chứa thuật toán nhận dạng
    - Người dùng không sửa được 
 
-- Flash (Template Database)
+- FLASH (Template Database/Fingerprint Database):
    - Lưu vân tay đã enroll
    - NotePad (User Data)
    - Mỗi vân tay = 1 template
    - Có Page ID
 
 - RAM: 
-   - Buffer ảnh 
-   - Buffer Charfile1/Charfile2
+   - ImageBuffer (Bộ đệm hình ảnh): Lưu tạm thời, rất ngắn 
+   - Buffer Charfile1/Charfile2 (Bộ đệm đặc trưng)
 
 ## 4. Vì sao lại có Buffer1/Buffer2
 - ZW111 không xử lý ảnh trực tiếp trên flash
@@ -159,7 +159,7 @@ MCU + DSP
 |-------|------|--------------|-----------------|-------|
 |1| `SSR`|  1 | 0 | State Register |
 |2| `SensorType`| 1 |   0 - 15 | Loại cảm biến |
-|3| `DataBaseSize`| 1 | Theo FLASH |  Dung lượng database vân tay |
+|3| `DataBaseSize`| 1 | Theo FLASH |  Dung lượng Fingerprint Database |
 
 #### PART 2 - Giao tiếp & bảo mật 
 |Number | Name | Length(Word) | Default/Content | Mô tả | 
@@ -170,9 +170,7 @@ MCU + DSP
 |7| `CFG_Baudrate`| 1 | 6 |  Hệ số baudrate |
 |8| `CFG_VID`| 1 |  | USB descriptor|
 |9| `CFG_PID`| 1 |  | USB descriptor|
-|10| `Reversed`| 1 |  |  | 
-....
-|13| `Reversed`| 1 |  |  | 
+|10 - 13 | `Reversed`| 1 |  |  | 
 |14| `ProductSN`| 4 | ProductSN, ASCII Code  |  Mô tả thiết bị từ nhà sản xuất |
 |15| `SoftwareVersion`| 4 | ASCII Code|  Mô tả thiết bị từ nhà sản xuất |
 |16| `Manufacturer `| 4 | ASCII Code  |  Mô tả thiết bị từ nhà sản xuất |
@@ -192,7 +190,90 @@ MCU + DSP
    - Driver không truy cập trực tiếp bảng 
    - Mà đọc/ghi thông tin qua lệnh `PS_ReadSysPara`, `PS_WriteReg`
 
+### 1.2 System Parameter Memory Structure 
+- ZW111 có SPM (System Parameter Memory) chia làm 8 page, mỗi page 512 bytes 
 
+| Page | Nội dung                   |
+| ---- | -------------------------- |
+| 0    | Reserved                   |
+| 1    | Parameter Table            |
+| 2    | User Notepad               |
+| 3–6  | Reserved                   |
+| 7    | Index Fingerprint Database |
+
+- Quan trọng: 
+   - Index table cho phép quản lý tối đa 2048 template
+   - Mỗi bit đại diện cho 1 template slot
+- Driver : 
+   - Đọc index để biết slot trống, không ghi template "mù"
+
+### 1.3 NotePad (Vùng nhớ người dùng)
+- ZW111 dành 512 bytes FLASH cho USER NotePad (chính là 1 page trong SPM)
+-  Cấu trúc: 
+   - Chia logic thành 16 page
+   - Mỗi page: 32 bytes 
+- Truy cập: 
+   - `PS_WriteNotePad(page, data[32])`
+   - `PS_ReadNotePad(page)`
+- Lưu ý quan trọng: 
+   - Ghi là ghi đè cả page 
+   - Không có write từng bytes
+   - Phù hợp để lưu ID người dùng, Metadata, Version ứng dụng
+
+### 1.4 Buffer & Fingerprint Database 
+- Các Buffer nội bộ: 
+| Buffer      | Dung lượng | Chức năng              |
+| ----------- | ---------- | ---------------------- |
+| ImageBuffer | ~72 KB     | Lưu ảnh vân tay        |
+| CharBuffer1 | ~7 Bytes   | Lưu feature / template |
+| CharBuffer2 | ~7 Bytes   | So khớp / enroll       |
+
+- Buffer này nằm bên trong module, không phải RAM host.
+- USER có thể đọc/ghi bất kỳ bộ đệm nào ở trên bằng các Command/Instruction ID
+- Để giảm thời gian giao tiếp khi tải lên hoặc tải xuống hình ảnh thông qua giao diện UART, chỉ 4-bit trên cùng của byte pixel được áp dụng, tức là kết hợp 2 byte pixel thành 1 byte trong quá trình truyền 
+   - Qua UART: 1 byte = 2 pixel (4-bit/pixel) → giảm thời gian
+- Còn đối với USB thì vẫn phải truyền đủ 8 bytes/pixel
+
+### 1.5 Features & Templates 
+- ZW111 không lưu ảnh mà lưu các đặc trưng vân tay (feature)
+- Feature file: 
+   - Kích thước: 425 bytes 
+   - Chứa: thông tin chung, Minutiae (điểm đặc trưng)
+- Template file: 
+   - Kích thước: 2129 bytes 
+   - Gồm 5 feature file của cùng 1 ngón tay 
+   - Dùng cho so khớp chính xác cao 
+- Quy trình chuẩn: 
+   - `GetImage` -> `GenChar` (n lần) -> `RegModel` (Tạo Template) -> `Storechar` (Ghi FLASH)
+
+### 1.6 Feature File Structure (Cấu trúc file đặc trưng)
+- Số lượng **Minutiae (điểm đặc trưng)** của 1 file đặc trưng thì không nhiều hơn **99**
+- Trong tổng 2129 bytes (kích thước của 1 file đặc trưng là 425 bytes), 56 bytes đầu là file header sử dụng cho thông tin chung. 
+- 369 bytes sau được dùng để lưu trữ thông tin chi tiết, 4 byte cho mỗi **Minutiae**
+- **Format file Header (56 bytes đầu)**:
+
+| Trường      | Ý nghĩa                 |
+| ----------- | ----------------------- |
+| Flag        | Hợp lệ / không          |
+| Type        | Loại feature            |
+| Quality     | Chất lượng (0–100)      |
+| Number      | Số minutiae             |
+| SN          | Thông tin hỗ trợ search |
+| Singularity | Tâm vân tay             |
+- MCU host không cần hiểu thứ này, cái này do nội bộ module xử lý
+
+### 1.7 ROM (Hệ thống bên trong Module)
+- ROM của ZW111 chứa toàn bộ hệ thống hoàn chỉnh: 
+   - Giao thức của UART/USB
+   - Bộ giải mã lệnh
+   - Thuật toán nhận dạng vân tay
+   - Quản lý FLASH
+   - Driver cảm biến vân tay (HF105)
+- Điều này giải thích: 
+   - ZW111 không phải sensor thuần 
+   - Mà là **SoC** vân tay hoàn chỉnh
+- Host MCU không cần xử lý ảnh, không xử lý thuật toán, chỉ cần: 
+   - Gửi lệnh, nhận ACK, nhận kết quả
 
 ## 2. Kiến trúc hệ thống phần mềm trong Project
 ```css
@@ -248,7 +329,7 @@ Software Components
 - Trong config UARTDRV USART, khi chọn vào đó, sẽ có cửa sổ bắt bạn chọn tên (instance) cho giao thức 
 - Hãy đặt là `USART_UAST1` nếu bạn chọn UART1 hoặc tùy theo tên bạn muốn đặt.
 
-![Config](../Images/USARTDRV_config.png)
+![Config](/Images/USARTDRV_config.png)
 
 ### 4.3. Cấu hình **USART UART** 
 - Sau khi Enable xong rồi thì bạn cần phải cấu hình luôn thông số và Pin cho giao thức
@@ -333,3 +414,23 @@ App / Zigbee
      v
  zw111_port_efr32.c (UARTDRV)
 ```
+
+## Note 
+- ZW111 KHÔNG lưu ảnh vân tay để người dùng truy xuất nhưng bên trong nó VẪN có ImageBuffer để xử lý tạm thời 
+
+### Nếu cảm biến không lưu ảnh thì ImageBuffer là gì ? 
+- Nó chính là buffer trung gian nội bộ, dùng cho pipeline xử lý 
+```css
+Cảm biến →
+  ImageBuffer (RAM nội)
+    ↓
+  Xử lý ảnh (lọc, tăng cường)
+    ↓
+  Trích đặc trưng (feature)
+    ↓
+  So khớp / tạo template
+```
+
+- Nó tồn tại rất ngắn, chỉ trong quá trình *eroll*, *capture*, *verify*, *identify*
+- Tự động thu thập và xử lý hình ảnh bằng ImageBuffer nội bộ 
+- Tuy nhiên, hình ảnh vân tay không được hiển thị cho host MCU, MCU chỉ giao tiếp thông qua các lệnh cấp cao và nhận kết quả khớp hoặc mã trạng thái.
