@@ -194,7 +194,7 @@ MCU + DSP
 - ZW111 có SPM (System Parameter Memory) chia làm 8 page, mỗi page 512 bytes 
 
 | Page | Nội dung                   |
-| ---- | -------------------------- |
+|------|----------------------------|
 | 0    | Reserved                   |
 | 1    | Parameter Table            |
 | 2    | User Notepad               |
@@ -221,7 +221,8 @@ MCU + DSP
    - Phù hợp để lưu ID người dùng, Metadata, Version ứng dụng
 
 ### 1.4 Buffer & Fingerprint Database 
-- Các Buffer nội bộ: 
+- Các Buffer nội bộ:
+
 | Buffer      | Dung lượng | Chức năng              |
 | ----------- | ---------- | ---------------------- |
 | ImageBuffer | ~72 KB     | Lưu ảnh vân tay        |
@@ -253,7 +254,7 @@ MCU + DSP
 - **Format file Header (56 bytes đầu)**:
 
 | Trường      | Ý nghĩa                 |
-| ----------- | ----------------------- |
+|-------------|-------------------------|
 | Flag        | Hợp lệ / không          |
 | Type        | Loại feature            |
 | Quality     | Chất lượng (0–100)      |
