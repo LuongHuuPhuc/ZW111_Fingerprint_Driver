@@ -146,7 +146,7 @@ Cảm biến →
 #### 5.2.2. Data Packet Format (Flag = `0x02`)
 - Cấu trúc: 
 
-![Data Packet Format](/Images/EndPacketFormat.png)
+![Data Packet Format](/Images/DataPacketFormat.png)
 
 - Dùng khi: 
    - Truyền template 
@@ -157,7 +157,7 @@ Cảm biến →
 #### 5.2.3. End Packet Format (Flag = `0x08`)
 - Cấu trúc: 
 
-![End Packet Format](/Images/CommandPacketFormat.png)
+![End Packet Format](/Images/EndPacketFormat.png)
 
 - Gói **cuối cùng** của chuỗi data packet
 
