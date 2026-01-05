@@ -1,8 +1,8 @@
 # I. TỔNG QUAN VỀ CẢM BIẾN VÂN TAY ZW111   
 
-![Sensor image](/Images/ZW111sensor.png)
-![Datasheet ZW111](https://www.elemon.com.ar/images/productos/hojas-de-datos/sensores-huella-dactilar/zw111.pdf)
-![Datasheet Fingerprint Sensor Module User Manual](https://cdn.sparkfun.com/assets/5/a/3/f/c/Module_User_Manual-17151-Capacitive_Fingerprint_Scanner_-_AS-108M.pdf)
+![Sensor image](/Images/ZW111sensor.png)v <br>
+**ZW111 datasheet**: ![Datasheet ZW111](https://www.elemon.com.ar/images/productos/hojas-de-datos/sensores-huella-dactilar/zw111.pdf) <br>
+**Communication Protocol**: ![Datasheet Fingerprint Sensor Module User Manual](https://cdn.sparkfun.com/assets/5/a/3/f/c/Module_User_Manual-17151-Capacitive_Fingerprint_Scanner_-_AS-108M.pdf)
 
 ## 1. ZW111 không phải là cảm biến 
 
@@ -67,7 +67,7 @@
    - Buffer Charfile1/Charfile2 (Bộ đệm đặc trưng)
 
 ## 4. Vì sao lại có Buffer1/Buffer2
-- ZW111 không xử lý ảnh trực tiếp trên flash
+- ZW111 không xử lý ảnh trực tiếp trên FLASH
 - Flow chuẩn: 
 
 ```sql
@@ -82,7 +82,127 @@ Match / RegModel
 ```
 - Buffer là RAM nội bộ, không phải MCU ngoài
 
-## 5. Vì sao driver phải dùng Command/Instruction Set + ACK 
+### 4.1 Nếu cảm biến không lưu ảnh thì ImageBuffer là gì ? 
+- ZW111 KHÔNG lưu ảnh vân tay để người dùng truy xuất nhưng bên trong nó VẪN có ImageBuffer để xử lý tạm thời 
+- Nó chính là buffer trung gian nội bộ, dùng cho pipeline xử lý 
+```css
+Cảm biến →
+  ImageBuffer (RAM nội)
+    ↓
+  Xử lý ảnh (lọc, tăng cường)
+    ↓
+  Trích đặc trưng (feature)
+    ↓
+  So khớp / tạo template
+```
+
+- Nó tồn tại rất ngắn, chỉ trong quá trình *eroll*, *capture*, *verify*, *identify*
+- Tự động thu thập và xử lý hình ảnh bằng ImageBuffer nội bộ 
+- Tuy nhiên, hình ảnh vân tay không được hiển thị cho host MCU, MCU chỉ giao tiếp thông qua các lệnh cấp cao và nhận kết quả khớp hoặc mã trạng thái.
+
+## 5. Instruction Form Specification (Giải thích giao thức lệnh)
+- ZW111 là module nhận diện vân tay hoạt động ở chế độ **Slave**, giao tiếp với MCU host qua UART
+- MCU host: 
+   - Gửi instruction (Command/Data packet)
+   - Nhận ACK packet hoặc Data packet
+- Module chỉ phản hổi, không chủ động gửi data
+
+### 5.1. Cơ chế phân loại gói tin (Packet Types)
+- ZW111 sử dụng 3 packet chính, tất cả đều bắt đầu bằng **packet header** cố định `0xEF01`
+
+| Packet flag | Loại packet            | Ý nghĩa                |
+| ----------- | ---------------------- | ---------------------- |
+| `0x01`      | Command packet         | Gói lệnh điều khiển    |
+| `0x02`      | Data packet (continue) | Gói dữ liệu trung gian |
+| `0x08`      | End data packet        | Gói dữ liệu cuối       |
+- Data luôn được chia thành nhiều packet
+
+### 5.2. Cấu trúc chung của Packet
+
+```text
+| Header | Chip Addr | Packet Flag | Length | Payload | Checksum |
+```
+- Chi tiết từng trường:
+
+| Trường        | Kích thước | Mô tả                                  |
+| ------------- | ---------- | -------------------------------------- |
+| Packet Header | 2 bytes    | Luôn là `0xEF01`                       |
+| Chip Address  | 4 bytes    | Địa chỉ module (mặc định `0xFFFFFFFF`) |
+| Packet Flag   | 1 byte     | Loại packet                            |
+| Packet Length | 2 bytes    | Tổng byte của Payload (Không tính header, address, flag)|
+| Payload       | N bytes    | Instruction / Data                     |
+| Checksum      | 2 bytes    | Tổng checksum (Theo quy tắc **Big-Endian**)|
+
+#### 5.2.1. Command Packet Format (Flag = `0x01`)
+- Cấu trúc: 
+
+![Command Packet Format](/Images/CommandPacketFormat.png)
+
+- Mã lệnh (instruction): 1 byte
+- Parameter: Tham số cho lệnh 
+- Checksum: Instruction + Parameters (2 bytes)
+- Packet Length = Số byte của instruction + Parameters  (2 bytes)
+
+#### 5.2.2. Data Packet Format (Flag = `0x02`)
+- Cấu trúc: 
+
+![Data Packet Format](/Images/EndPacketFormat.png)
+
+- Dùng khi: 
+   - Truyền template 
+   - Truyền dữ liêu FLASH 
+   - Truyền dữ liệu nhiều gói 
+- Mỗi gói phải được ACK trước khi gửi tiếp 
+
+#### 5.2.3. End Packet Format (Flag = `0x08`)
+- Cấu trúc: 
+
+![End Packet Format](/Images/CommandPacketFormat.png)
+
+- Gói **cuối cùng** của chuỗi data packet
+
+#### 5.2.4 ACK Packet Format (Flag = `0x07`)
+- Đây là Packet chỉ truyền 1 chiều khi Module phản hồi lại MCU host (phản hồi trạng thái), không truyền 2 chiều như **Data Packet**
+- Định dạng packet giống hệt 3 **Data Packet** trên nhưng nó không nằm trong nhóm Data Packet do Payload của nó khác (chỉ gửi Confirm code + return param).
+
+![ACK Packet Format](/Images/ACKPacketFormat.png)
+
+- ACK Packet có thể đi kèm Data Packet (*ACK packet contains parameter and can be with continue data packet* - theo datasheet)
+- Nghĩa là ACK packet vừa có thể: 
+   - Chỉ báo trạng thái
+   - Hoặc vừa ACK vừa báo còn data tiếp theo 
+- Ví dụ: 
+   - ACK = `0xF1` → cho phép bắt đầu stream
+   - ACK = `0xF0` → cho phép gửi packet data tiếp
+- Quan hệ giữa ACK và Data packet 
+
+```scss
+Host → Command packet
+Module → ACK (0x07, ConfirmCode = 0xF1)
+
+Host → Data packet (0x02)
+Module → ACK (0x07, ConfirmCode = 0xF0)
+
+Host → End data packet (0x08)
+Module → ACK (0x07, ConfirmCode = 0x00)
+```
+- ACK điều khiển flow, Data chỉ mang Payload
+
+-  **Thứ tự truyền bắt buộc (QUAN TRỌNG)**
+
+```scss
+Command Packet
+  ↓ ACK (0xF1)
+Data Packet (0x02)
+  ↓ ACK (0xF0)
+Data Packet (0x02)
+  ↓ ACK (0xF0)
+End Data Packet (0x08)
+  ↓ ACK (0x00)
+```
+- Không được gửi Packet mới khi chưa nhận được ACK phản hồi 
+
+### 5.3. Vì sao driver phải dùng Command/Instruction Set + ACK 
 - Vì ZW111 là thiết bị chủ 
 
 | MCU ngoài             | ZW111          |
@@ -91,27 +211,8 @@ Match / RegModel
 | Chờ ACK               | Trả kết quả    |
 | Không biết thuật toán | Không cần biết |
 
-- Đây là kiểu giao tiếp **Command-Response Protocol**, không phải **Register-based** như các ngoại vi khác (Ví dụ I2C,...)
+- Đây là kiểu giao tiếp **Command-Response Protocol**, không phải **Register-based** như các cảm biến ngoại vi khác (Ví dụ I2C,...)
 
-### 5.1. Cấu trúc Packet chuẩn 
-
-```text
-| Header | Addr | PID | Length | Command/Data | Checksum |
-
-```
-- Ví dụ (hex):
-
-```nginx
-EF 01 | FF FF FF FF | 01 | 00 03 | 01 | 00 05
-
-```
-- Giải thích:
-   - `EF 01`: Header 
-   - `FF FF FF FF`: Address (cảm biến)
-   - `01`: Packet ID (Command)
-   - `00 03`: Length 
-   - `01`: Command Length
-   - `00 05`: Check sum
 
 ## 6. Vì sao nhìn cảm biến ZW111 "dẹt" như thế ?
 - Thế hệ cũ, LED, Camera thường nằm lộ ra, module to và dày. Nhưng thế hệ mới như ZW111 đã được cải tiến nhỏ gọn hơn
@@ -415,23 +516,3 @@ App / Zigbee
      v
  zw111_port_efr32.c (UARTDRV)
 ```
-
-## Note 
-- ZW111 KHÔNG lưu ảnh vân tay để người dùng truy xuất nhưng bên trong nó VẪN có ImageBuffer để xử lý tạm thời 
-
-### Nếu cảm biến không lưu ảnh thì ImageBuffer là gì ? 
-- Nó chính là buffer trung gian nội bộ, dùng cho pipeline xử lý 
-```css
-Cảm biến →
-  ImageBuffer (RAM nội)
-    ↓
-  Xử lý ảnh (lọc, tăng cường)
-    ↓
-  Trích đặc trưng (feature)
-    ↓
-  So khớp / tạo template
-```
-
-- Nó tồn tại rất ngắn, chỉ trong quá trình *eroll*, *capture*, *verify*, *identify*
-- Tự động thu thập và xử lý hình ảnh bằng ImageBuffer nội bộ 
-- Tuy nhiên, hình ảnh vân tay không được hiển thị cho host MCU, MCU chỉ giao tiếp thông qua các lệnh cấp cao và nhận kết quả khớp hoặc mã trạng thái.
