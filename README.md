@@ -140,7 +140,7 @@ Cảm biến →
 
 - Mã lệnh (instruction): 1 byte
 - Parameter: Tham số cho lệnh 
-- Cách tính **Packet Length** = tổng số byte tính từ trường **Packet Length** cho đến trường **Checksum(Sum)** (bao gồm cả Instruction/Parameter/Data và **Checksum** nhưng không bao gồm chính byte của trường **Packet Length**) 
+- Cách tính **Packet Length** = tổng số byte tính từ trường **Packet Length** cho đến trường **Checksum(Sum)** (bao gồm cả Instruction/Parameter/Data và **Checksum** nhưng không bao gồm chính byte của trường **Packet Length**). Đây cũng chính là độ dài của **Payload**
 - Cách tính **Checksum** = ổng số byte tính từ **Packet Flag** cho đến **Checksum**. Nếu kết quả cộng vượt quá 2 byte thì bỏ qua phần Carry (chỉ giữ 16-bit thấp)
 
 #### 5.2.2. Data Packet Format (Flag = `0x02`)
