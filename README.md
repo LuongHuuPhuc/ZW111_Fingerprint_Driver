@@ -1,12 +1,16 @@
 # I. TỔNG QUAN VỀ CẢM BIẾN VÂN TAY ZW111   
+**Author: LuongHuuPhuc**
 
-![Sensor image](/Images/ZW111sensor.png)v <br>
+![Sensor image](/Images/ZW111sensor.png) <br>
 **ZW111 datasheet**: ![Datasheet ZW111](https://www.elemon.com.ar/images/productos/hojas-de-datos/sensores-huella-dactilar/zw111.pdf) <br>
 **Communication Protocol**: ![Datasheet Fingerprint Sensor Module User Manual](https://cdn.sparkfun.com/assets/5/a/3/f/c/Module_User_Manual-17151-Capacitive_Fingerprint_Scanner_-_AS-108M.pdf)
 
 ## 1. ZW111 không phải là cảm biến 
 
 - **ZW111** là một module cảm biến vân tay hoàn chỉnh, không chỉ là một sensor quét ảnh mà còn là hệ thống nhúng mini bên trong 
+- Cảm biến không ghi trực tiếp "Big-Endian" trong datasheet, nhưng byte order được thể hiện rõ qua cách mà nó mô tả Packet Header, Packet Length và các ví dụ packet, trong đó byte có trọng số lớn luôn được truyền trước
+- Cụ thể, với Packet Header: `0xEF01` nếu không nói gì mặc định byte đầu tiên được gửi đi là `EF` rồi sau đó mới là `01`
+- Do đó, giao thức ZW111 sử dụng "Big-Endian" cho tất cả các trường hợp nhiều bytes
 - Bên trong cảm biến ZW111 có 4 khối lớn: 
 
 ```css
@@ -81,8 +85,30 @@ Match / RegModel
 
 ```
 - Buffer là RAM nội bộ, không phải MCU ngoài
+- ZW111 dùng tận 2 CharBuffer vì Module cần 2 vùng RAM tạm để xử lý các bước **Trích xuất - So khớp - Tạo Template - Tìm kiếm** theo luồng làm việc thực tế
+- Tóm gọn: một Buffer để lưu mẫu hiện tại, Buffer còn lại để giữ mẫu "đối chiếu/mẫu thứ hai"
 
-### 4.1 Nếu cảm biến không lưu ảnh thì ImageBuffer là gì ? 
+### 4.1. Match 1:1 (So khớp trực tiếp)
+- Luồng phổ biến: 
+	- `GET_IMAGE` -> Chụp ảnh vân tay vào ImageBuffer 
+	- `GET_CHAR` -> Trích xuất đặc trưng ra CharBuffer1
+	- Lặp lại `GET_IMAGE` + `GEN_CHAR` -> Trích đặc trưng ra CharBuffer2
+	- `MATCH` -> Module so sánh CharBuffer1 với CharBuffer2 và trả về Score/điểm tương khớp 
+	
+### 4.2. Enroll (đăng ký) cần 2 lần quét để tăng độ tin cậy
+- Enroll thường yêu cầu 2 lần đặt ngón tay (hoặc 3 lần tùy module) để đảm bảo độ ổn định và giảm lỗi do ảnh mờ/ướt/khô
+- Luồng điển hình: 
+	- Quét lần 1 -> `GEN_CHAR(1)` -> CharBuffer1
+	- Quét lần 2 -> `GEN_CHAR(2)` -> CharBuffer2
+	- `REG_MODEL` -> Hợp nhất hai bộ đặc trưng (CB1 + CB2) thành template (thường ghi lại CB1)
+	- `STORE_CHAR(page_id)` -> Lưu template vào FingerPrint Database trong FLASH
+	
+### 4.3. Search(1:N) thường dùng 1 buffer làm "query"
+- `GET_IMAGE` -> `GEN_CHAR(1)` -> CharBuffer1 chứa đặc trưng của ngón tay hiện tại
+- `SEARCH` -> Module dùng CharBuffer1 làm truy vấn để tìm trong database FLASH
+- CharBuffer2 lúc này có thể để trống, hoặc dùng cho các tác vụ khác 
+
+### 4.4 Nếu cảm biến không lưu ảnh thì ImageBuffer là gì ? 
 - ZW111 KHÔNG lưu ảnh vân tay để người dùng truy xuất nhưng bên trong nó VẪN có ImageBuffer để xử lý tạm thời 
 - Nó chính là buffer trung gian nội bộ, dùng cho pipeline xử lý 
 ```css
@@ -134,7 +160,10 @@ Cảm biến →
 | Checksum      | 2 bytes    | Tổng checksum (Theo quy tắc **Big-Endian**)|
 
 - Cách tính **Packet Length** = tổng số byte tính từ trường **Packet Length** cho đến trường **Checksum(Sum)** (bao gồm cả Instruction/Parameter/Data và **Checksum** nhưng không bao gồm chính byte của trường **Packet Length**). Đây cũng chính là độ dài của **Payload**
-- Cách tính **Checksum** = tổng số byte tính từ **Packet Flag** cho đến **Checksum**. Nếu kết quả cộng vượt quá 2 byte thì bỏ qua phần Carry (chỉ giữ 16-bit thấp)
+> Giá trị này là giá trị mà Packet Length biểu diễn ra chứ không phải kích thước của trường đó. Kích thước của trường **Packet Length** mặc định là 2 bytes
+
+- Cách tính **Checksum** = tổng số byte tính từ **Packet Flag** cho đến **Checksum** (không lấy **Checksum**). Nếu kết quả cộng vượt quá 2 byte thì bỏ qua phần Carry (chỉ giữ 16-bit thấp)
+> Cũng giống như **Packet Length**, kích thước của trường **Checksum** chỉ tối đã 2 bytes nhưng giá trị bên trong nó có biểu diễn được khác với thích thước 
 
 #### 5.2.1. Command Packet Format (Flag = `0x01`)
 - Cấu trúc: 
@@ -240,7 +269,8 @@ MCU + DSP
 ```
 
 # II. CHI TIẾT VỀ CẢM BIẾN VÂN TAY ZW111
-- *Thông tin dưới đây được lấy từ datasheet*
+
+*Thông tin dưới đây được lấy từ datasheet*
 
 ## 1. Software Developing Guide - ZW111
 ### 1.1 Paramter Table (Bảng tham số hệ thống)
@@ -304,8 +334,9 @@ MCU + DSP
 | 7    | Index Fingerprint Database |
 
 - Quan trọng: 
-   - Index table cho phép quản lý tối đa 2048 template
+   - **Index Fingerprint Database** cho phép quản lý tối đa 2048 template. Đây là số entry trong bảng index dùng để đánh dấu template có tồn tại hay không, mỗi entry tương ứng với 1 page ID.
    - Mỗi bit đại diện cho 1 template slot
+   - Mục đích là để tăng tốc độ SEARCH (bitmap index), không cần phải scan toàn FLASH.
 - Driver : 
    - Đọc index để biết slot trống, không ghi template "mù"
 
@@ -323,6 +354,7 @@ MCU + DSP
    - Phù hợp để lưu ID người dùng, Metadata, Version ứng dụng
 
 ### 1.4 Buffer & Fingerprint Database 
+#### Buffer
 - Các Buffer nội bộ:
 
 | Buffer      | Dung lượng | Chức năng              |
@@ -337,6 +369,10 @@ MCU + DSP
    - Qua UART: 1 byte = 2 pixel (4-bit/pixel) → giảm thời gian
 - Còn đối với USB thì vẫn phải truyền đủ 8 bytes/pixel
 
+#### Database
+- Kích thước **Fingerprint/Template database** không cố định mà được đo bằng số lượng Template (page)
+- Trong datasheet, mục `READ_SYS_DATA (0x0F)` trả về kích thước thực tế thường là ~200-300 templates 
+ 
 ### 1.5 Features & Templates 
 - ZW111 không lưu ảnh mà lưu các đặc trưng vân tay (feature)
 - Feature file: 
@@ -346,8 +382,6 @@ MCU + DSP
    - Kích thước: 2129 bytes 
    - Gồm 5 feature file của cùng 1 ngón tay 
    - Dùng cho so khớp chính xác cao 
-- Quy trình chuẩn: 
-   - `GetImage` -> `GenChar` (n lần) -> `RegModel` (Tạo Template) -> `Storechar` (Ghi FLASH)
 
 ### 1.6 Feature File Structure (Cấu trúc file đặc trưng)
 - Số lượng **Minutiae (điểm đặc trưng)** của 1 file đặc trưng thì không nhiều hơn **99**
@@ -377,6 +411,49 @@ MCU + DSP
    - Mà là **SoC** vân tay hoàn chỉnh
 - Host MCU không cần xử lý ảnh, không xử lý thuật toán, chỉ cần: 
    - Gửi lệnh, nhận ACK, nhận kết quả
+
+### 1.8 Phân cấp dữ liệu từ CAO -> THẤP 
+#### Cấp 1- Database (FLASH)
+
+```text
+Fingerprint Database (FLASH)
+└── Template[0]
+└── Template[1]
+└── Template[2]
+...
+```
+- Lưu lâu dài, mỗi template gắn với Page ID, dùng để SEARCH/MATCH
+
+#### Cấp 2 - Template 
+- Template chứa dữ liệu fingerrprint đã mã hóa và xử lý 
+- Không chỉnh sửa trực tiếp, được tạo từ **REG_MODEL**, được ghi bằng **STORE_CHAR**
+
+#### Cấp 3 - Feature (RAM) 
+- Là nơi chứa **CharBuffer1/CharBuffer2** 
+- Nơi lưu feature fingerprint sinh ra từ ảnh gốc 
+- Dùng để MATCH/SEARCH/REG_MODEL 
+- Feature ở đây chỉ tồn tại tạm thời 
+
+#### Cấp 4 - Image (RAM) 
+- Là nơi chứa **ImageBuffer** - ảnh Fingerprint thô 
+- Chỉ tồn tại ngay sau `GET_IMAGE`, dùng để `GEN_CHAR`, `UP_IMAGE`
+- ImageBuffer không được lưu trong FLASH
+
+### 1.9 Quy trình chuẩn khi enroll fingerprint
+
+```text
+GET_IMAGE
+  ↓
+GEN_CHAR (CharBuffer1)
+  ↓
+GET_IMAGE
+  ↓
+GEN_CHAR (CharBuffer2)
+  ↓
+REG_MODEL        // gộp 2 feature → template (RAM)
+  ↓
+STORE_CHAR       // ghi template vào FLASH
+```
 
 ## 2. Kiến trúc hệ thống phần mềm trong Project
 ```css
@@ -414,8 +491,6 @@ Relay / Motor
 - Driver ZW111 phải nằm trong Zigbee **End Device** vì đó là nơi duy nhất có cảm biến và điều khiển khóa 
 
 ## 4. Cấu hình giao thức cho ZW111 trong project
-- Giao thức sử dụng **USART1**
-- Bước cấu hình Driver USART:
 
 ### 4.1. Thêm **UARTDRV**
 - Vào: 
@@ -475,6 +550,10 @@ Zigbee Cluster
 ```yaml
  
 ZW111_lib/
+├─ App/
+│  ├─ zw111_app.h			← API tương tác với Zigbee AF
+│  └─ zw111_app.h
+│
 ├─ Inc/
 │  ├─ Port/
 │  │   ├─ zw111_port_efr32.h
@@ -483,7 +562,7 @@ ZW111_lib/
 │  ├─ zw111.h              ← API cho app
 │  ├─ zw111_types.h        ← struct / enum / status
 │  ├─ zw111_lowlevel.h     ← API lệnh thấp
-│  ├─ zw111_port.h         ← interface phần cứng
+│  ├─ zw111_port.h         ← interface khởi tạo và giao tiếp phần cứng
 │  └─ zw111_port_select.h  ← chọn port (EFR32/STM32/ESP32)
 │
 ├─ Src/
@@ -500,7 +579,7 @@ ZW111_lib/
 ### 5.1 FLOW các file của thư viện 
 
 ```yaml
-App / Zigbee
+zw111_app.h (App / Zigbee)
      |
      v
  zw111.h          ← API cho app
