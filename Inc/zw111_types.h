@@ -149,20 +149,20 @@ typedef struct {
 
 /* Thong tin image cho ImageBuffer*/
 typedef struct {
+  uint32_t size_bytes;
   uint16_t width;
   uint16_t height;
-  uint32_t size_bytes;
 } zw111_image_info_t;
 
 /*  Struct tong hop cua he thong */
 typedef struct ZW111_SYSTEM_INFO {
+  uint32_t device_address;           /* Dia chi cua cam bien ZW111 (32-bit) */
   uint16_t system_state;             /* Hardware State Register */
   uint16_t sensor_type;              /* Sensor Type Code */
   uint16_t database_capacity;        /* So luong template toi da */
-  zw111_match_threshold_t security;  /* Security Rank tuong ung voi 5 feature file (1 - 5 level) */
-  uint32_t device_address;           /* Dia chi cua cam bien ZW111 (32-bit) */
-  zw111_packet_size_t packet_size;   /* Kich thuoc Packet (32/64/128/256) */
   uint16_t baudrate_multipler;       /* N -> Baudrate = 9600 * N */
+  zw111_match_threshold_t security;  /* Security Rank tuong ung voi 5 feature file (1 - 5 level) */
+  zw111_packet_size_t packet_size;   /* Kich thuoc Packet (32/64/128/256) */
 } zw111_sysinfo_t;
 
 #ifdef __cplusplus

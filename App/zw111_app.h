@@ -36,7 +36,7 @@ extern "C" {
 #endif // ZW111_APP_MATCH_SCORE_MIN
 
 /* Struct luu trang thai tra ve cua API o Application Layer cho cam bien */
-typedef enum {
+typedef enum ZW111_APP_STATE {
   /* Trang thai nhan roi cua he thong, chua thuc hien bat ky thao tac nao voi he thong */
   ZW111_APP_IDLE = 0,
 
@@ -47,6 +47,10 @@ typedef enum {
    * Neu Probe thanh cong -> Chuyen sang WAIT_FINGER state
    * Neu that bat -> Chuyen sag ERROR state */
   ZW111_APP_PROBE,
+
+  /* Trang thai sau khi da Probe thanh cong, dang ranh khong tu poll gi ca
+   * chi thuc hien case tiep theo neu co yeu cau  */
+  ZW111_APP_READY,
 
   /* Finger - cho USER dat ngon tay len cam bien
    * O trang thai nay, he thong lap lai:
@@ -64,6 +68,9 @@ typedef enum {
    * Neu that bai -> chuyen sang ERROR */
   ZW111_APP_GEN_CHAR,
 
+  /* Sau khi */
+  ZW111_APP_LOAD_CHAR,
+
   /* So khop van tay
    * Neu thanh cong -> DONE
    * Neu that bai -> quay lai WAIT_FINGER */
@@ -75,22 +82,27 @@ typedef enum {
    * Sau khi xu ly xong, quay ve IDLE  */
   ZW111_APP_DONE,
 
-  /* */
+  /* Danh dau thoi diem bat dau step 1 cua dang ky van tay moi */
   ZW111_APP_ENROLL_STEP1,
 
-  /* */
+  /* Danh dau thoi diem bat dau step 2 cua dang ky van tay moi */
   ZW111_APP_ENROLL_STEP2,
 
-  /* */
+  /* Luu van tay da enroll thanh cong */
   ZW111_APP_ENROLL_STORE,
 
   /* Loi trong qua trinh xu ly */
   ZW111_APP_ERROR
 } zw111_app_state_t;
 
-/* ----------------------------------------------------------- */
+/* Struct chua yeu cau tu USER (match/enroll van tay) */
+typedef enum ZW111_APP_REQUEST{
+  ZW111_REQUEST_NONE = 0,
+  ZW111_REQUEST_ENROLL,
+  ZW111_REQUEST_MATCH
+} zw111_req_t;
 
-#ifdef EFR32_PLATFORM
+/* ----------------------------------------------------------- */
 
 /**
  * @brief API cho application layer de khoi tao phan cung UART cho cam bien ZW111
@@ -106,47 +118,58 @@ typedef enum {
 zw111_app_state_t zw111_app_uart_init(uint32_t baudrate, uint32_t timeout_ms, uint32_t password);
 
 /**
- * @brief Ham kiem tra
+ * @brief Ham kiem tra và hien thi ra cac thong so hien tai cua cam bien
+ * sau khi da duoc cau hinh (System state, sensor info, device addrress, ...)
  */
 zw111_app_state_t zw111_app_sensor_probe(void);
 
 /**
- * @brief
+ * @brief API thuc hien FSM cho toan bo chuong trinh
+ *
+ * @return Trang thai cua cac khoi xu ly (PROBE/ENROLL/MATCH/IDLE/ERROR/DONE)
  */
 zw111_app_state_t zw111_app_process(void);
 
 /**
- * @brief Ham kich hoat FSM (May trang thai) cua chuong trinh
+ * @brief Ham tra ve trang thai hien tai cua FSM
+ */
+zw111_app_state_t zw111_app_get_state(void);
+
+/**
+ * @brief
+ */
+void zw111_app_uart_deinit(void);
+
+/**
+ * @brief Ham chuyen state tu IDLE (khong lam gi) cua FSM sang PROBE de bat dau chuong trinh
  * `zw111_app_process()` se bat dau flow 1 chu ky cua chuong trinh
  *  sau khi chuyen tu `ZW111_APP_IDLE` sang `ZW111_APP_PROBE`
  */
-void zw111_app_start(void);
+void zw111_app_start_probe(void);
 
 /**
  * @brief API bat dau qua trinh Enroll (dang ky) van tay moi
  */
-void zw111_app_start_enroll(uint16_t page_id);
+void zw111_app_request_enroll(void);
 
 /**
- *
+ * @brief API yeu cau thuc hien so khop van tay khi nhan BTN1
+ * (Ly do lam the nay vi khong muon sensor sau khi Probe di vao wait finger luon
+ * ma phai co yeu cau tu USER)
  */
-zw111_app_state_t zw111_app_get_state(void);
+void zw111_app_request_match(void);
 
-#endif // EFR32_PLATFORM
-
-/* ----------------------------------------------------------- */
-
-#ifdef STM32_PLATFORM
-/* */
-#endif // STM32_PLATFORM
-
-/* ----------------------------------------------------------- */
-
-#ifdef ESP32_PLATFORM
-/* */
-#endif // ESP32_PLATFORM
-
-/* ----------------------------------------------------------- */
+/**
+ * @brief API gui trang thai so khop van tay (thanh cong/that bai) den Zigbee stack cua app.c len USER
+ *
+ * @param page_id
+ * @param score
+ *
+ * @note
+ * Do thu vien khong chua cac API cua Zigbee stack nen ham chi khai bao o day
+ * de goi tu FSM nhung lai duoc dinh nghia tai app.c
+ */
+void zw111_app_match_state_on_zibgee(bool match_state, uint16_t page_id, uint16_t score);
 
 #ifdef __cplusplus
 }

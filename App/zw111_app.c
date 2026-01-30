@@ -30,6 +30,15 @@ static uint8_t s_match_try = 0;
 /* Bien luu so lan thu lai khi enroll van tay moi */
 static uint8_t s_enroll_try = 0;
 
+/* Bien luu yeu cau cua USER (NONE/ENROLL/MATCH) */
+static volatile zw111_req_t s_req = ZW111_REQUEST_NONE;
+
+/* Bien noi bo luu pageID (thay doi) de enroll - dung khi STORE_CHAR de biet se ghi template moi vao dau */
+static uint16_t s_enroll_page_id = 1;
+
+/* Dung khi MATCH theo kieu vet can (brute-force) - LOAD_CHAR tung page de xem ngon tay hien tai khop voi template nao */
+static uint16_t s_match_page_id = 0;
+
 /* ----------------------------------------------------------- */
 
 /**
@@ -86,44 +95,90 @@ zw111_app_state_t zw111_app_uart_init(uint32_t baudrate, uint32_t timeout_ms, ui
 
 /* ----------------------------------------------------------- */
 
-zw111_app_state_t zw111_app_sensor_probe(void){
-  zw111_sysinfo_t info;
-  emberAfCorePrintln("[ZW111] Probing sensor...");
+void zw111_app_uart_deinit(void){
+  zw111_uart_deinit(NULL);
+}
 
-  if(zw111_read_sysinfo(&info) != ZW111_STATUS_OK){
-      emberAfCorePrintln("[ZW111] Probe FAILED");
+/* ----------------------------------------------------------- */
+
+zw111_app_state_t zw111_app_get_state(void){
+  return s_state;
+}
+
+/* ----------------------------------------------------------- */
+
+zw111_app_state_t zw111_app_sensor_probe(void){
+  /* Bien luu thong so cua cam bien khi Probe */
+  zw111_sysinfo_t info;
+
+  emberAfCorePrintln("[ZW111] Probing sensor...");
+  zw111_status_t ret = zw111_read_sysinfo(&info);
+
+  if(ret != ZW111_STATUS_OK){
+      emberAfCorePrintln("[ZW111] Probe FAILED, status=0x%02X", ret);
       return ZW111_APP_ERROR;
   }
 
-  emberAfCorePrintln("[ZW111] Probe OK | Addr: 0x%08X | Capacity: %d", info.device_address, info.database_capacity);
-  emberAfCorePrintln("[ZW111] Sensor is waiting finger...");
+  emberAfCorePrintln("[ZW111] Probe DONE: !\n 1. System State: 0x%02X\n 2. Sensor Type: 0x%02X\n 3. Security: 0x%02X\n 4. Addr: 0x%08X\n 5. Capacity: %d\n 6. Baudrate multiple: %d",
+                     info.system_state,
+                     info.sensor_type,
+                     info.security,
+                     info.device_address,
+                     info.database_capacity,
+                     info.baudrate_multipler);
 
-  return ZW111_APP_WAIT_FINGER;
+  return ZW111_APP_READY; // San sang de Enroll/Match
 }
 
 /* ----------------------------------------------------------- */
 
 zw111_app_state_t zw111_app_process(void){
-  zw111_status_t ret; /* Bien luu ket qua tra ve API Application Layer cua cam bien */
+  zw111_status_t ret; /* Bien luu ket qua tra ve API Application Layer cua cam bien （noi bo ham) */
   zw111_app_state_t ret_app; /* Bien luu ket qua tra ve API tai Zigbee AF */
   uint32_t now = zw111_ll_get_ticks();
 
   switch(s_state){
+
+    /* ===================== IDLE ===================== */
     case ZW111_APP_IDLE:
       /* Khong tu init o day de tranh vong lap
        * Nen goi o ham khoi tao tai emberAfMainInitCallback trong app.c */
     break;
 
+    /* ===================== PROBE ===================== */
+    /* Kiem tra thong so Sensor */
     case ZW111_APP_PROBE:
+      zw111_ll_flush_uart(); // Xoa rac RX
+      zw111_port_delay_ms(200);
+
       ret_app = zw111_app_sensor_probe();
-      if(ret_app != ZW111_APP_WAIT_FINGER){
+      if(ret_app != ZW111_APP_READY){
           zw111_app_enter_state(ZW111_APP_ERROR);
           break;
       }
       zw111_app_enter_state(ret_app);
     break;
 
-    /* ===================== MATCH FLOW (XAC THUC VAN TAY) ===================== */
+
+    /* ===================== READY ===================== */
+    // Xu ly request sau khi Probe thanh cong !
+    case ZW111_APP_READY:
+
+      /* Neu yeu cau Enroll van tay moi tu event */
+      if(s_req == ZW111_REQUEST_ENROLL){
+          s_req = ZW111_REQUEST_NONE;
+          zw111_app_enter_state(ZW111_APP_ENROLL_STEP1);
+      }
+
+      /* Neu yeu cau so khop van tay tu event */
+      else if(s_req == ZW111_REQUEST_MATCH){
+         s_req = ZW111_REQUEST_NONE;
+         zw111_app_enter_state(ZW111_APP_WAIT_FINGER);
+      }
+    break;
+
+    /* ===================== MATCH (XAC THUC VAN TAY) ===================== */
+    // Note: Flow nay dang dung cach Verify (so sanh voi 1 template trong FLASH, khong dung Search)
 
     /* ------- 1. WAIT FINGER: Cho USER dat ngon tay vao cam bien */
     case ZW111_APP_WAIT_FINGER:
@@ -140,7 +195,11 @@ zw111_app_state_t zw111_app_process(void){
           emberAfCorePrintln("[ZW111] >>> GET IMAGE done, about to GEN CHAR... ");
           zw111_app_enter_state(ZW111_APP_GEN_CHAR);
       }
-      else if(ret == ZW111_STATUS_NO_FINGER) { /* Cho tiep */ }
+
+      else if(ret == ZW111_STATUS_NO_FINGER){
+          /* Cho tiep */
+      }
+
       else{
           emberAfCorePrintln("[ZW111] GET_IMAGE error=0x%02X", ret);
           zw111_app_enter_state(ZW111_APP_ERROR);
@@ -150,49 +209,77 @@ zw111_app_state_t zw111_app_process(void){
     /* ------- 2. GEN CHAR: Thuc hien trich xuat dac trung van tay */
     case ZW111_APP_GEN_CHAR:
       ret = zw111_gen_char(ZW111_CHARBUFFER_1);
+
       if(ret == ZW111_STATUS_OK){
           emberAfCorePrintln("[ZW111] >>> GEN_CHAR OK");
-          zw111_app_enter_state(ZW111_APP_MATCH);
+          s_match_page_id = 1;
+          zw111_app_enter_state(ZW111_APP_LOAD_CHAR);
       }else{
           emberAfCorePrintln("[ZW111] GEN_CHAR error=0x%02X", ret);
           zw111_app_enter_state(ZW111_APP_ERROR);
       }
     break;
 
-    /* ------- 3. MATCH: Thuc hien so khop van tay voi du lieu co trong database */
+    /* ------- 3. LOAD CHAR: Thuc hien tim kiem du lieu co trong database */
+    case ZW111_APP_LOAD_CHAR:
+      ret = zw111_load_char(ZW111_CHARBUFFER_2, s_match_page_id);
+
+      if(ret == ZW111_STATUS_OK){
+          emberAfCorePrintln("[ZW111] >>> LOAD_CHAR from CHARBUFFER2 OK");
+          zw111_app_enter_state(ZW111_APP_MATCH);
+      }else{
+          s_match_page_id++;
+          if(s_match_page_id >= s_enroll_page_id){ // Neu pageID match khong khop nhieu hon so PageID enroll hien co
+              zw111_app_enter_state(ZW111_APP_READY);
+          }else{
+              /* Quay lai LOAD_CHAR tu pageID khac */
+              zw111_app_enter_state(ZW111_APP_LOAD_CHAR);
+          }
+      }
+    break;
+
+    /* ------- 4. MATCH: Thuc hien so khop van tay voi du lieu co trong database */
     case ZW111_APP_MATCH:{
       uint16_t score = 0;
       ret = zw111_match(&score);
 
       if(ret == ZW111_STATUS_OK){
-          emberAfCorePrintln("[ZW111] >>> MATCH OK score=%d", score);
+          emberAfCorePrintln("[ZW111] >>> MATCH OK score=%d, found at PageID=%d", score, s_match_page_id);
 
           if(score >= ZW111_APP_MATCH_SCORE_MIN){
               emberAfCorePrintln("[ZW111] >>> ACCEPT ");
               zw111_app_enter_state(ZW111_APP_DONE);
+
               /* TODO: Them logic dong mo cua va gui lenh vao mang Zigbee */
+              zw111_app_match_state_on_zibgee(true, s_match_page_id, score);
           }
       }else if(ret == ZW111_STATUS_MATCH_FAIL){
           emberAfCorePrintln("[ZW111] MATCH FAIL");
           s_match_try++;
 
-          if(s_match_try >= 3){
+          if(s_match_try >= 5){
               s_match_try = 0;
-              emberAfCorePrintln("[ZW111] MATCH FAIL over 3 times, back to WAIT FINGER");
-              zw111_app_enter_state(ZW111_APP_WAIT_FINGER); /* Reset timer */
+              emberAfCorePrintln("[ZW111] MATCH FAIL over 5 times, back to READY");
+              zw111_app_match_state_on_zibgee(false, 0, score);
+              zw111_app_enter_state(ZW111_APP_READY); /* Reset state ve READY */
+          }else{
+              zw111_app_enter_state(ZW111_APP_LOAD_CHAR);
           }
+
       }else{
           emberAfCorePrintln("[ZW111] MATCH error=0x%02X", ret);
+          zw111_app_match_state_on_zibgee(false, 0, 0);
           zw111_app_enter_state(ZW111_APP_ERROR);
       }
     }
     break;
 
-    /* ===================== ENROLL FLOW (DANG KY VAN TAY MOI) ===================== */
+    /* ===================== ENROLL (DANG KY VAN TAY MOI) ===================== */
 
-    /* ------- 1. Enroll step 1: GetImage + GenChar(CharBuffer1) */
+    /* ------- 1. ENROLL STEP 1: GetImage + GenChar(CharBuffer1) */
     case ZW111_APP_ENROLL_STEP1:
-      ret = zw111_enroll_step1();
+      ret = zw111_enroll_step1(); // Trong API nay da co GetImage va GenChar roi
+
       if(ret == ZW111_STATUS_OK){
           s_enroll_try = 0;
           emberAfCorePrintln("[ZW111] ENROLL STEP1 OK");
@@ -209,9 +296,10 @@ zw111_app_state_t zw111_app_process(void){
       }
     break;
 
-    /* ------- 2. Enroll step 2: GetImage + GenChar(CharBuffer2) + RegModel */
+    /* ------- 2. ENROLL STEP 2: GetImage + GenChar(CharBuffer2) + RegModel */
     case ZW111_APP_ENROLL_STEP2:
       ret = zw111_enroll_step2();
+
       if(ret == ZW111_STATUS_OK){
           s_enroll_try = 0;
           emberAfCorePrintln("[ZW111] ENROLL STEP2 OK");
@@ -226,11 +314,14 @@ zw111_app_state_t zw111_app_process(void){
       }
     break;
 
-    /* ------- 3. Store Enrolled Fingerprint: StoreChar(page_id) */
+    /* ------- 3. STORE ENROLLED Fingerprint: StoreChar(page_id) */
     case ZW111_APP_ENROLL_STORE:
       ret = zw111_enroll_store();
+
       if(ret == ZW111_STATUS_OK){
-          emberAfCorePrintln("[ZW111] ENROLL STORE OK");
+          emberAfCorePrintln("[ZW111] ENROLL STORED OK at pageID=%d, next pageID=%d", s_enroll_page_id, s_enroll_page_id + 1);
+          s_enroll_page_id++; /* Moi pageID tuong ung voi 1 lan enroll thanh cong */
+
           zw111_app_enter_state(ZW111_APP_DONE);
       }else{
           emberAfCorePrintln("[ZW111] ENROLL STORE error=0x%02X", ret);
@@ -240,8 +331,10 @@ zw111_app_state_t zw111_app_process(void){
 
     /* ===================== DONE ===================== */
     case ZW111_APP_DONE:
-      emberAfCorePrintln("[ZW111] APP DONE state...");
+      emberAfCorePrintln("[ZW111] APP DONE state...back to READY");
+
       /* Xu ly tac vu khac tai app.c (gui Zibgee, log, LED) */
+      zw111_app_enter_state(ZW111_APP_READY); // Quay lai READY de bat dau lai FSM
     break;
 
     /* ===================== ERROR ===================== */
@@ -250,31 +343,32 @@ zw111_app_state_t zw111_app_process(void){
       emberAfCorePrintln("[ZW111] APP ERROR state...");
       /* Dung tai day, khong back ve IDLE, quyet dinh se duoc thuc hien tai app.c */
     break;
+
   }
   return s_state;
 }
 
 /* ----------------------------------------------------------- */
 
-void zw111_app_start(void){
-  if(s_state == ZW111_APP_IDLE){
-      zw111_app_enter_state(ZW111_APP_PROBE);
-  }
+void zw111_app_start_probe(void){
+  if(s_state == ZW111_APP_IDLE) zw111_app_enter_state(ZW111_APP_PROBE);
 }
 
 /* ----------------------------------------------------------- */
 
-void zw111_app_start_enroll(uint16_t page_id){
+void zw111_app_request_match(void){
   s_match_try = 0;
   s_enroll_try = 0;
-  zw111_enroll_start(page_id);
-  zw111_app_enter_state(ZW111_APP_ENROLL_STEP1);
+  s_req = ZW111_REQUEST_MATCH;
 }
 
 /* ----------------------------------------------------------- */
 
-zw111_app_state_t zw111_app_get_state(void){
-  return s_state;
+void zw111_app_request_enroll(void){
+  s_enroll_try = 0;
+  s_match_try = 0;
+  s_req = ZW111_REQUEST_ENROLL;
+  (void)zw111_enroll_start(s_enroll_page_id); // Luu vi tri pageID cho bien trong zw111.c
 }
 
 /* ----------------------------------------------------------- */

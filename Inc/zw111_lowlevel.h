@@ -38,20 +38,23 @@ extern "C" {
 #define ZW111_PID_END               0x08       /* End Packet Flag */
 #define ZW111_PID_ACK               0x07       /* ACK Packet Flag */
 
-#define ZW111_CHECKSUM_SIZE_BYTES   2     /* Kich thuoc toi da cua checksum */
-#define ZW111_INSTRUCTION_BYTES     1     /* Kich thuoc toi da cua Instruction */
-#define ZW111_CONFIRM_CODE_BYTES    1     /* Kich thuoc toi da cua Confirm Code ACK */
+#define ZW111_HDR_LEN               9u     /* Chieu dai so bytes tu Header -> Packet Length */
+#define ZW111_CHECKSUM_SIZE_BYTES   2u     /* Kich thuoc (bytes) toi da cua field Checksum */
+#define ZW111_INSTRUCTION_BYTES     1u     /* Kich thuoc (bytes) toi da cua field Instruction */
+#define ZW111_PACKET_FLAG_BYTES     1u     /* Kich thuoc (bytes) toi da cua filed Packet Flag (PID) */
+#define ZW111_CONFIRM_CODE_BYTES    1u     /* Kich thuoc (bytes) toi da cua field Confirm Code trong ACK Packet */
 
 #define ZW111_ACK_PAYLOAD_LENGTH_MIN    (ZW111_CHECKSUM_SIZE_BYTES) + (ZW111_CONFIRM_CODE_BYTES) // Packet Length toi thieu cua ACK Packet (3 bytes)
 #define ZW111_CMD_PAYLOAD_LENGTH_MIN    (ZW111_CHECKSUM_SIZE_BYTES) + (ZW111_INSTRUCTION_BYTES)  // Packet Length toi thieu cua Command Packet (3 bytes)
-#define ZW111_DATA_PAYLOAD_LENGTH_MIN   ZW111_CHECKSUM_SIZE_BYTES // Packet Length toi thieu cua Data Packet (2 bytes) - khong tinh Data
-#define ZW111_END_PAYLOAD_LENGTH_MIN    ZW111_CHECKSUM_SIZE_BYTES // Packet Length toi thieu cua End Packet (2 bytes) - Khong tinh Data
+#define ZW111_DATA_PAYLOAD_LENGTH_MIN   2u // Packet Length toi thieu cua Data Packet (2 bytes) - khong tinh Data
+#define ZW111_END_PAYLOAD_LENGTH_MIN    2u // Packet Length toi thieu cua End Packet (2 bytes) - Khong tinh Data
 
 #define THIS_IS_LAST_DATA_PACKET        1
 #define THIS_IS_NOT_LAST_DATA_PACKET    0
 
 #define ZW111_FLUSH_TOTAL_MS        50
 #define ZW111_FLUSH_BYTE_TO         1
+#define ZW111_RX_TIMEOUT_MS         1000
 
 // =============== PROTOTYPE FUNCTION ===============
 
@@ -72,7 +75,7 @@ extern "C" {
 zw111_status_t zw111_ll_send_command_packet(zw111_cmd_t cmd, const uint8_t *params, uint8_t param_len);
 
 /**
- * @brief API nhan ACK packet tu device cam bien
+ * @brief API nhan va parse ACK packet tu device cam bien (ver1)
  *
  * @remark Packet Format:
  *   [Header][Address][PID][Length][Confirm Code][Return Params...][Checksum]
@@ -84,11 +87,35 @@ zw111_status_t zw111_ll_send_command_packet(zw111_cmd_t cmd, const uint8_t *para
  * @param ret_params Buffer luu tham so tra ve (Return parameters) (Can truyen buffer vao de gia tri co the tra ve)
  * @param ret_param_len Con tro luu chieu dai cua tham so tra ve (Return Parameters)
  *
+ * @warning (NON-BLOCKING de TIMEOUT)
+ * Neu Port layer dung @c UARTDRV_Receive() non-blocking, callback/DONE thuong xay ra
+ * khi nhan du so byte yeu cau
+ * Vi UART la stream, header/payload co the khong den lien mach hoac bi lech do gap byte rac
+ * nen viec RX co dinh 9 byte header "mot phat mot" co the xay ra timeout o buoc *Poll*
+ * Khi gap hien tuong nay, nen implement co che resync header (doc byte-by-byte toi khi gap 0xEF01)
+ * thay vi assume frame alignment tuyet doi
+ *
  * @return zw111_status_t
  *  - ZW111_STATUS_OK on success
  *  - ZW111_STATUS_ERROR on failure
  */
-zw111_status_t zw111_ll_receive_ack_packet(zw111_ack_t *ack, uint8_t *ret_params, uint16_t *ret_param_len);
+__attribute__((unused)) zw111_status_t zw111_ll_receive_ack_packet_ver1(zw111_ack_t *ack, uint8_t *ret_params, uint16_t *ret_param_len);
+
+/**
+ * @brief API nhan va parse ACK packet tu device cam bien (ver2)
+ *
+ * @note Do han che cua ver1 la co 1 khoang gap giua 2 lan transaction nen
+ * gay ra lech frame khien cho payload khong nhan du -> TImeout
+ *
+ * @param ack Con tro luu Confirm Code cua ACK Packet
+ * @param ret_params Buffer luu tham so tra ve (Return parameters) (Can truyen buffer vao de gia tri co the tra ve)
+ * @param ret_param_len Con tro luu chieu dai cua tham so tra ve (Return Parameters)
+ *
+ * @return zw111_status_t
+ *  - ZW111_STATUS_OK on success
+ *  - ZW111_STATUS_ERROR on failure
+ */
+zw111_status_t zw111_ll_receive_ack_packet_ver2(zw111_ack_t *ack, uint8_t *ret_params, uint16_t *ret_param_len);
 
 /**
  * @brief API gui Data packet den device cam bien
@@ -107,7 +134,7 @@ zw111_status_t zw111_ll_receive_ack_packet(zw111_ack_t *ack, uint8_t *ret_params
 zw111_status_t zw111_ll_send_data_packet(const uint8_t *data, uint16_t data_len, uint8_t is_last);
 
 /**
- * @brief API de nhan Data packet tu device cam bien
+ * @brief API de nhan va parse Data packet tu device cam bien
  *
  * @note Dung khi can download image hay feature data
  *
@@ -119,7 +146,7 @@ zw111_status_t zw111_ll_send_data_packet(const uint8_t *data, uint16_t data_len,
  *  - ZW111_STATUS_OK on success
  *  - ZW111_STATUS_ERROR on failure
  */
-zw111_status_t zw111_ll_receive_data_packet(uint8_t *buf, uint16_t buf_len, uint16_t *recv_len);
+__attribute__((unused)) zw111_status_t zw111_ll_receive_data_packet(uint8_t *buf, uint16_t buf_len, uint16_t *recv_len);
 
 /**
  * @brief API de tinh checksum cua moi Packet
@@ -222,6 +249,7 @@ void zw111_ll_set_chip_address(uint32_t addr);
 /**
  * @brief Ham wrapper cho API get ticks da co san cua Port
  * Muc dich de de quan ly va thong nhat giua cac layer voi nhau
+ *
  * @return Ticks hien tai cua he thong
  */
 uint32_t zw111_ll_get_ticks(void);

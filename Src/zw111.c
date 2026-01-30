@@ -15,7 +15,7 @@ extern "C" {
 #include "string.h"
 
 /* Default enroll state */
-static uint16_t s_enroll_page_id = 0xFFFF;
+static uint16_t s_enroll_page_id_local = 0xFFFF;
 
 /* ----------------------------------------------------------- */
 
@@ -36,6 +36,16 @@ zw111_status_t zw111_uart_init(const zw111_cfg_t *cfg){
           return ZW111_STATUS_ERROR;
       }
   }
+  return ZW111_STATUS_OK;
+}
+
+/* ----------------------------------------------------------- */
+
+zw111_status_t zw111_uart_deinit(const zw111_cfg_t *cfg){
+  /* TODO: Hien tai voi EFR32 chua can dung (Sau nay mo rong cho cac Platform khac) */
+  (void)(cfg);
+
+  if(zw111_port_uart_deinit() != true) return ZW111_STATUS_ERROR;
   return ZW111_STATUS_OK;
 }
 
@@ -75,6 +85,8 @@ zw111_status_t zw111_get_image(void){
   return zw_map_ack_to_status(ack);
 }
 
+/* --------- MATCH FLOW ---------  */
+
 /* ----------------------------------------------------------- */
 
 zw111_status_t zw111_gen_char(zw111_charbuffer_t buf){
@@ -84,34 +96,6 @@ zw111_status_t zw111_gen_char(zw111_charbuffer_t buf){
   zw111_status_t ret = zw111_ll_cmd_with_ack(ZW111_CMD_GEN_CHAR, p, 1, &ack);
   if(ret != ZW111_STATUS_OK) return ret;
 
-  return zw_map_ack_to_status(ack);
-}
-
-/* ----------------------------------------------------------- */
-
-zw111_status_t zw111_match(uint16_t *score){
-  /* PS_Match: ACK co the tra ve score (2 bytes) - theo datasheet */
-  zw111_ack_t ack = 0;
-  uint8_t ret_params[8] = {0}; // Buffer chua gia tri tham so tra ve
-  uint16_t ret_len = 0;
-
-  // Command MATCH khong co Parameter gui di
-  zw111_status_t ret = zw111_ll_send_command_packet(ZW111_CMD_MATCH, NULL, 0);
-  if(ret != ZW111_STATUS_OK) return ret;
-
-  // Nhan lai ACK phan hoi sau khi gui Command
-  ret = zw111_ll_receive_ack_packet(&ack, ret_params, &ret_len);
-  if(ret != ZW111_STATUS_OK) return ret;
-
-  // Anh xa lai ket qua ACK
-  ret = zw_map_ack_to_status(ack);
-  if(ret != ZW111_STATUS_OK) return ret;
-
-  // Gia tri Score tra ve (Sau Confirm code)
-  if(score){
-      if(ret_len < 2) return ZW111_STATUS_ERROR;
-      *score = read_u16_be(&ret_params[0]);
-  }
   return zw_map_ack_to_status(ack);
 }
 
@@ -133,7 +117,7 @@ zw111_status_t zw111_search(zw111_charbuffer_t buf, uint16_t start, uint16_t cou
   zw111_status_t ret = zw111_ll_send_command_packet(ZW111_CMD_SEARCH, p, (uint8_t)sizeof(p));
   if(ret != ZW111_STATUS_OK) return ret;
 
-  ret = zw111_ll_receive_ack_packet(&ack, ret_params, &ret_len);
+  ret = zw111_ll_receive_ack_packet_ver2(&ack, ret_params, &ret_len);
   if(ret != ZW111_STATUS_OK) return ret;
 
   /* Return tu ACK Packet: PageID (2 bytes) + Score (2 bytes) */
@@ -145,10 +129,57 @@ zw111_status_t zw111_search(zw111_charbuffer_t buf, uint16_t start, uint16_t cou
   return zw_map_ack_to_status(ack);
 }
 
+/* ----------------------------------------------------------- */
+
+zw111_status_t zw111_load_char(zw111_charbuffer_t buf, uint16_t page_id){
+  if(page_id == 0xFFFF) return ZW111_STATUS_ERROR;
+
+  /* Params Cmd Packet: BufferID (1) + PageID (2) = 3 bytes */
+  uint8_t p[3];
+  p[0] = (uint8_t)buf; // BufferID
+  write_u16_be(&p[1], page_id); // PageID
+
+  zw111_ack_t ack = 0;
+  zw111_status_t ret = zw111_ll_cmd_with_ack(ZW111_CMD_LOAD_CHAR, p, (uint8_t)sizeof(p), &ack); // Khong co Return params
+  if(ret != ZW111_STATUS_OK) return ret;
+
+  return zw_map_ack_to_status(ack);
+}
+
+/* ----------------------------------------------------------- */
+
+zw111_status_t zw111_match(uint16_t *score){
+  /* PS_Match: ACK co the tra ve score (2 bytes) - theo datasheet */
+  zw111_ack_t ack = 0;
+  uint8_t ret_params[8] = {0}; // Buffer chua gia tri tham so tra ve
+  uint16_t ret_len = 0;
+
+  // Command MATCH khong co Parameter gui di
+  zw111_status_t ret = zw111_ll_send_command_packet(ZW111_CMD_MATCH, NULL, 0);
+  if(ret != ZW111_STATUS_OK) return ret;
+
+  // Nhan lai ACK phan hoi sau khi gui Command
+  ret = zw111_ll_receive_ack_packet_ver2(&ack, ret_params, &ret_len);
+  if(ret != ZW111_STATUS_OK) return ret;
+
+  // Anh xa lai ket qua ACK
+  ret = zw_map_ack_to_status(ack);
+  if(ret != ZW111_STATUS_OK) return ret;
+
+  // Gia tri Score tra ve (Sau Confirm code)
+  if(score){
+      if(ret_len < 2) return ZW111_STATUS_ERROR;
+      *score = read_u16_be(&ret_params[0]);
+  }
+  return zw_map_ack_to_status(ack);
+}
+
 /* --------- ENROLL FLOW ---------  */
 
+/* ----------------------------------------------------------- */
+
 zw111_status_t zw111_enroll_start(uint16_t page_id){
-  s_enroll_page_id = page_id;
+  s_enroll_page_id_local = page_id;
   return ZW111_STATUS_OK;
 }
 
@@ -161,7 +192,7 @@ zw111_status_t zw111_enroll_start(uint16_t page_id){
  * @return pageID muon Enroll
  */
 static uint16_t zw111_get_enroll_pageid(void){
-  return s_enroll_page_id;
+  return s_enroll_page_id_local;
 }
 
 /* ----------------------------------------------------------- */
@@ -214,7 +245,7 @@ zw111_status_t zw111_enroll_store(void){
   if(ret != ZW111_STATUS_OK) return ret;
 
   /* Reset enroll context sau khi da store xong */
-  s_enroll_page_id = 0xFFFF;
+  s_enroll_page_id_local = 0xFFFF;
   return zw_map_ack_to_status(ack);
 }
 
@@ -268,7 +299,7 @@ zw111_status_t zw111_read_index_table(uint8_t *table, uint8_t len){
       if(ret != ZW111_STATUS_OK) return ret;
 
       // Nhan ACK phan hoi + Return Param (Index Info) 32 bytes
-      ret = zw111_ll_receive_ack_packet(&ack, ret_param, &ret_len);
+      ret = zw111_ll_receive_ack_packet_ver2(&ack, ret_param, &ret_len);
       if(ret != ZW111_STATUS_OK) return ret;
 
       ret = zw_map_ack_to_status(ack);
@@ -289,7 +320,7 @@ zw111_status_t zw111_read_index_table(uint8_t *table, uint8_t len){
         if(ret != ZW111_STATUS_OK) return ret;
 
         // Nhan ACK phan hoi + Return Param (Index Info) 32 bytes
-        ret = zw111_ll_receive_ack_packet(&ack, ret_param, &ret_len);
+        ret = zw111_ll_receive_ack_packet_ver2(&ack, ret_param, &ret_len);
         if(ret != ZW111_STATUS_OK) return ret;
 
         ret = zw_map_ack_to_status(ack);
@@ -315,7 +346,7 @@ zw111_status_t zw111_get_valid_template_count(uint16_t *count){
   zw111_status_t ret = zw111_ll_send_command_packet(ZW111_CMD_VALID_TEMPLATE, NULL, 0);
   if(ret != ZW111_STATUS_OK) return ret;
 
-  ret = zw111_ll_receive_ack_packet(&ack, ret_param, &ret_len);
+  ret = zw111_ll_receive_ack_packet_ver2(&ack, ret_param, &ret_len);
   if(ret != ZW111_STATUS_OK) return ret;
 
   if(ret_len < 2) return ZW111_STATUS_ERROR;
@@ -336,7 +367,7 @@ zw111_status_t zw111_read_sysinfo(zw111_sysinfo_t *info){
   zw111_status_t ret = zw111_ll_send_command_packet(ZW111_CMD_READ_SYS_PARA, NULL, 0);
   if(ret != ZW111_STATUS_OK) return ret;
 
-  ret = zw111_ll_receive_ack_packet(&ack, ret_param, &ret_len);
+  ret = zw111_ll_receive_ack_packet_ver2(&ack, ret_param, &ret_len);
   if(ret != ZW111_STATUS_OK) return ret;
 
   ret = zw_map_ack_to_status(ack);
@@ -367,7 +398,7 @@ zw111_status_t zw111_set_new_chip_addr(uint32_t newAddr){
   zw111_status_t ret = zw111_ll_cmd_with_ack(ZW111_CMD_SET_CHIP_ADR, p, sizeof(p), &ack);
   if(ret != ZW111_STATUS_OK) return ret;
 
-  // Set dia chi moi
+  // Set lai dia chi moi vao bien static dang dung
   zw111_ll_set_chip_address(newAddr);
 
   return zw_map_ack_to_status(ack);

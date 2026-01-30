@@ -60,6 +60,13 @@ typedef struct ZW111_UART_CONFIG {
 zw111_status_t zw111_uart_init(const zw111_cfg_t *cfg);
 
 /**
+ *
+ * @param cfg
+ * @return
+ */
+zw111_status_t zw111_uart_deinit(const zw111_cfg_t *cfg);
+
+/**
  * @brief API xac thuc mat khau handshake voi ZW111
  *
  * @param[in] pwd Mat khau 32-bit (theo datasheet)
@@ -95,6 +102,8 @@ zw111_status_t zw111_set_password(uint32_t new_pwd);
  */
 zw111_status_t zw111_get_image(void);
 
+/* --------- MATCH FLOW ---------  */
+
 /**
  * @brief API tao dac trung (feature file) tu ImageBuffer va luu vao CharBuffer
  *
@@ -109,17 +118,6 @@ zw111_status_t zw111_get_image(void);
  *  - ZW111_STATUS_ERROR on failure
  */
 zw111_status_t zw111_gen_char(zw111_charbuffer_t buf);
-
-/**
- * @brief API de so sanh diem tuong dong giua CharBuffer1 va CharBuffer2
- * @param[out] score Con tro den gia tri Score tra ve tu module
- *
- * @return zw111_status_t
- *  - ZW111_STATUS_OK on success
- *  - ZW111_STATUS_ERROR on failure
- *  - ZW111_STATUS_MATCH_FAIL neu khong khop
- */
-zw111_status_t zw111_match(uint16_t *score);
 
 /**
  * @brief Search CharBuffer trong Database
@@ -137,12 +135,29 @@ zw111_status_t zw111_match(uint16_t *score);
 zw111_status_t zw111_search(zw111_charbuffer_t buf, uint16_t start, uint16_t count, zw111_match_result_t *result);
 
 /**
+ * @brief API load char (dac tinh) van tay tu FLASH vao RAM de so khop (thay cho Search)
+ * @return
+ */
+zw111_status_t zw111_load_char(zw111_charbuffer_t buf, uint16_t page_id);
+
+/**
+ * @brief API de so sanh diem tuong dong giua CharBuffer1 va CharBuffer2
+ * @param[out] score Con tro den gia tri Score tra ve tu module
+ *
+ * @return zw111_status_t
+ *  - ZW111_STATUS_OK on success
+ *  - ZW111_STATUS_ERROR on failure
+ *  - ZW111_STATUS_MATCH_FAIL neu khong khop
+ */
+zw111_status_t zw111_match(uint16_t *score);
+
+/**
  *
  * @return zw111_status_t
  *  - ZW111_STATUS_OK on success
  *  - ZW111_STATUS_ERROR on failure
  */
-zw111_status_t zw111_sleep_mode();
+zw111_status_t zw111_sleep_mode(void);
 
 /* --------- ENROLL FLOW ---------  */
 

@@ -439,9 +439,11 @@ Fingerprint Database (FLASH)
 - Chỉ tồn tại ngay sau `GET_IMAGE`, dùng để `GEN_CHAR`, `UP_IMAGE`
 - ImageBuffer không được lưu trong FLASH
 
-### 1.9 Quy trình chuẩn khi enroll fingerprint
+### 1.9 Quy trình chuẩn khi enroll fingerprint & match fingerprint
 
 ```text
+>>> ENROLL FLOW 
+
 GET_IMAGE
   ↓
 GEN_CHAR (CharBuffer1)
@@ -453,6 +455,37 @@ GEN_CHAR (CharBuffer2)
 REG_MODEL        // gộp 2 feature → template (RAM)
   ↓
 STORE_CHAR       // ghi template vào FLASH
+
+>>> MATCH FLOW
+
+- C1: IDENTIFY (Tìm ID trong FLASH)
+GET_IMAGE
+  ↓
+GEN_CHAR (CharBuffer1)         // trích đặc trưng từ ảnh vân tay
+  ↓
+SEARCH / IDENTIFY              // tìm trong DB: startPage..(startPage+N-1)
+  ↓
+IF FOUND:
+    → return (pageID, score)   // tồn tại trong DB
+    → ACCEPT / OPEN DOOR
+ELSE:
+    → NOT FOUND                // không có trong DB
+    → REJECT / back to READY
+    
+- C2: VERIFY (So với template trong FLASH)
+GET_IMAGE
+  ↓
+GEN_CHAR (CharBuffer1)
+  ↓
+LOAD_CHAR(pageID → CharBuffer2)   // đọc template từ FLASH vào Buffer2
+  ↓
+MATCH (PS_Match)
+  ↓
+IF MATCH OK:
+    → ACCEPT
+ELSE:
+    → REJECT
+
 ```
 
 ## 2. Kiến trúc hệ thống phần mềm trong Project
@@ -468,6 +501,7 @@ STORE_CHAR       // ghi template vào FLASH
           │
           ▼
 [ App / Server ]
+
 ```
 
 ## 3. Luồng hoạt động chuẩn (cửa thông minh)

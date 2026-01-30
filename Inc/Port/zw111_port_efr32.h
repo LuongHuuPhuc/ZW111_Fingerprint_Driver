@@ -20,18 +20,12 @@ extern "C" {
 #include "../zw111_port.h"
 
 #if defined(EFR32_PLATFORM)
-#include "uartdrv.h"
-#include "sl_udelay.h"
-#include "sl_sleeptimer.h"
-#include "ecode.h"
 
-#define UART_BLOCKING_MODE    1
+//#define USER_PORT_UART_INIT      1
 
 #ifndef SL_PORT_UART_INIT
 #define SL_PORT_UART_INIT     1
 #endif // SL_PORT_UART_INIT
-
-//#define USER_PORT_UART_INIT   1
 
 /* Struct config UART rieng cua EFR32 Platform */
 typedef struct {
@@ -55,7 +49,7 @@ typedef struct {
  *
  * @param handle Bien luu cau truc phan cung UART
  */
-bool zw111_port_efr32_set_handle(UARTDRV_Handle_t uart_handle);
+EFR32_PLATFORM_TAG bool zw111_port_efr32_set_handle(UARTDRV_Handle_t uart_handle);
 
 #ifdef USER_PORT_UART_INIT
 /**
@@ -64,7 +58,7 @@ bool zw111_port_efr32_set_handle(UARTDRV_Handle_t uart_handle);
  *
  * @note USART hien tai mac dinh dung trong ham nay la **USART1**
  */
-void zw111_port_efr32_default_cfg(zw111_port_efr32_cfg_t *cfg);
+EFR32_PLATFORM_TAG void zw111_port_efr32_default_cfg(zw111_port_efr32_cfg_t *cfg);
 
 #endif //  USER_PORT_UART_INIT
 
